@@ -1,4 +1,5 @@
 import express from "express";
+
 import {
   createForm,
   myForms,
@@ -11,29 +12,107 @@ import {
   shareForm,
   permissions,
   removePermission,
+  uploadResponseFile,
+  uploadThemeImage,
   submitResponse,
-  responses
+  responses,
 } from "../controllers/formController.js";
+
 import { requireAuth } from "../middleware/auth.js";
+
+import {
+  responseUpload,
+  imageUpload,
+  singleUpload,
+} from "../middleware/upload.js";
 
 const router = express.Router();
 
-router.get("/mine", requireAuth, myForms);
-router.post("/", requireAuth, createForm);
+// ==========================================
+// PUBLIC ROUTES
+// ==========================================
 
-router.get("/public/:shareId", getPublicForm);
-router.post("/public/:shareId/responses", submitResponse);
+router.get(
+  "/public/:shareId",
+  getPublicForm
+);
 
-router.get("/:id", requireAuth, getForm);
-router.put("/:id", requireAuth, updateForm);
-router.post("/:id/publish", requireAuth, publishForm);
-router.post("/:id/unpublish", requireAuth, unpublishForm);
-router.delete("/:id", requireAuth, deleteForm);
+router.post(
+  "/public/:shareId/upload",
+  singleUpload(responseUpload, "file"),
+  uploadResponseFile
+);
 
-router.get("/:id/permissions", requireAuth, permissions);
-router.post("/:id/permissions", requireAuth, shareForm);
-router.delete("/:id/permissions/:userId", requireAuth, removePermission);
+router.post(
+  "/public/:shareId/responses",
+  submitResponse
+);
 
-router.get("/:id/responses", requireAuth, responses);
+// ==========================================
+// AUTHENTICATED ROUTES
+// ==========================================
+
+router.use(requireAuth);
+
+router.get(
+  "/mine",
+  myForms
+);
+
+router.post(
+  "/",
+  createForm
+);
+
+router.get(
+  "/:id",
+  getForm
+);
+
+router.put(
+  "/:id",
+  updateForm
+);
+
+router.post(
+  "/:id/publish",
+  publishForm
+);
+
+router.post(
+  "/:id/unpublish",
+  unpublishForm
+);
+
+router.delete(
+  "/:id",
+  deleteForm
+);
+
+router.post(
+  "/:id/permissions",
+  shareForm
+);
+
+router.get(
+  "/:id/permissions",
+  permissions
+);
+
+router.delete(
+  "/:id/permissions/:userId",
+  removePermission
+);
+
+router.post(
+  "/:id/theme-image",
+  singleUpload(imageUpload, "image"),
+  uploadThemeImage
+);
+
+router.get(
+  "/:id/responses",
+  responses
+);
 
 export default router;

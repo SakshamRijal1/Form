@@ -1,40 +1,136 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import api from "../api";
 import { useAuth } from "../context/AuthContext";
-import React from "react";
-export default function Register() {
-  const [form, setForm] = useState({ name: "", email: "", password: "" });
-  const [error, setError] = useState("");
-  const { setUser } = useAuth();
-  const navigate = useNavigate();
 
-  async function submit(e) {
+function Register() {
+  const navigate = useNavigate();
+  const { login } = useAuth();
+
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const [error, setError] = useState("");
+
+  const handleRegister = async (e) => {
     e.preventDefault();
-    setError("");
+
     try {
-      const { data } = await api.post("/auth/register", form);
-      setUser(data.user);
+      const response = await fetch(
+        "http://localhost:5000/api/auth/register",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            name,
+            email,
+            password,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.message || "Registration failed"
+        );
+      }
+
+      login(data.user, data.token);
+
       navigate("/");
-    } catch (err) {
-      setError(err.response?.data?.message || "Registration failed");
+    } catch (error) {
+      setError(error.message);
     }
-  }
+  };
 
   return (
-    <main className="auth-page">
-      <form className="auth-card" onSubmit={submit}>
-        <h1>Create account</h1>
-        {error && <div className="error">{error}</div>}
-        <input placeholder="Name" value={form.name}
-          onChange={e => setForm({...form, name:e.target.value})} required />
-        <input type="email" placeholder="Email" value={form.email}
-          onChange={e => setForm({...form, email:e.target.value})} required />
-        <input type="password" placeholder="Password (6+ characters)" value={form.password}
-          onChange={e => setForm({...form, password:e.target.value})} minLength={6} required />
-        <button className="primary">Register</button>
-        <p>Already registered? <Link to="/login">Login</Link></p>
-      </form>
-    </main>
+    <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
+
+      <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-lg">
+
+        <h1 className="text-3xl font-bold text-center">
+          Create Account
+        </h1>
+
+        <p className="mt-2 text-center text-gray-500">
+          Create your account to continue
+        </p>
+
+        {error && (
+          <p className="mt-4 rounded-lg bg-red-100 p-3 text-red-600">
+            {error}
+          </p>
+        )}
+
+        <form
+          onSubmit={handleRegister}
+          className="mt-6 space-y-4"
+        >
+
+          <input
+            type="text"
+            placeholder="Full name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className="w-full rounded-lg border p-3"
+            required
+          />
+
+          <input
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full rounded-lg border p-3"
+            required
+          />
+
+          <input
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full rounded-lg border p-3"
+            required
+          />
+
+          <button
+            type="submit"
+            className="w-full rounded-lg bg-black p-3 text-white"
+          >
+            Register
+          </button>
+
+        </form>
+
+        <div className="my-6 flex items-center gap-3">
+          <div className="h-px flex-1 bg-gray-200" />
+          <span className="text-sm text-gray-400">
+            OR
+          </span>
+          <div className="h-px flex-1 bg-gray-200" />
+        </div>
+
+        {/* Google button will go here */}
+
+        <p className="mt-6 text-center text-sm">
+          Already have an account?{" "}
+          <Link
+            to="/login"
+            className="font-semibold text-blue-600"
+          >
+            Login
+          </Link>
+        </p>
+
+      </div>
+
+    </div>
   );
 }
+
+export default Register;

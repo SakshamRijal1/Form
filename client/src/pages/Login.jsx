@@ -1,39 +1,123 @@
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import api from "../api";
 import { useAuth } from "../context/AuthContext";
-import React from "react";
-export default function Login() {
-  const [form, setForm] = useState({ email: "", password: "" });
-  const [error, setError] = useState("");
-  const { setUser } = useAuth();
-  const navigate = useNavigate();
 
-  async function submit(e) {
+function Login() {
+  const navigate = useNavigate();
+  const { login } = useAuth();
+
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  const [error, setError] = useState("");
+
+  const handleLogin = async (e) => {
     e.preventDefault();
-    setError("");
+
     try {
-      const { data } = await api.post("/auth/login", form);
-      setUser(data.user);
+      const response = await fetch(
+        "http://localhost:5000/api/auth/login",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            email,
+            password,
+          }),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.message || "Login failed");
+      }
+
+      login(data.user, data.token);
+
       navigate("/");
-    } catch (err) {
-      setError(err.response?.data?.message || "Login failed");
+    } catch (error) {
+      setError(error.message);
     }
-  }
+  };
 
   return (
-    <main className="auth-page">
-      <form className="auth-card" onSubmit={submit}>
-        <h1>Welcome back</h1>
-        <p className="muted">Login to manage your forms.</p>
-        {error && <div className="error">{error}</div>}
-        <input type="email" placeholder="Email" value={form.email}
-          onChange={e => setForm({...form, email:e.target.value})} required />
-        <input type="password" placeholder="Password" value={form.password}
-          onChange={e => setForm({...form, password:e.target.value})} required />
-        <button className="primary">Login</button>
-        <p>New here? <Link to="/register">Create an account</Link></p>
-      </form>
-    </main>
+    <div className="min-h-screen flex items-center justify-center bg-gray-100 px-4">
+
+      <div className="w-full max-w-md rounded-2xl bg-white p-8 shadow-lg">
+
+        <h1 className="text-3xl font-bold text-center">
+          Welcome Back
+        </h1>
+
+        <p className="mt-2 text-center text-gray-500">
+          Login to your account
+        </p>
+
+        {error && (
+          <p className="mt-4 rounded-lg bg-red-100 p-3 text-red-600">
+            {error}
+          </p>
+        )}
+
+        <form
+          onSubmit={handleLogin}
+          className="mt-6 space-y-4"
+        >
+
+          <input
+            type="email"
+            placeholder="Email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            className="w-full rounded-lg border p-3"
+            required
+          />
+
+          <input
+            type="password"
+            placeholder="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="w-full rounded-lg border p-3"
+            required
+          />
+
+          <button
+            type="submit"
+            className="w-full rounded-lg bg-black p-3 text-white"
+          >
+            Login
+          </button>
+
+        </form>
+
+        <div className="my-6 flex items-center gap-3">
+          <div className="h-px flex-1 bg-gray-200" />
+          <span className="text-sm text-gray-400">
+            OR
+          </span>
+          <div className="h-px flex-1 bg-gray-200" />
+        </div>
+
+        {/* Google button will go here */}
+
+        <p className="mt-6 text-center text-sm">
+          Don't have an account?{" "}
+          <Link
+            to="/register"
+            className="font-semibold text-blue-600"
+          >
+            Register
+          </Link>
+        </p>
+
+      </div>
+
+    </div>
   );
 }
+
+export default Login;

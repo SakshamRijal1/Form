@@ -1,257 +1,786 @@
 import crypto from "crypto";
+import fs from "fs/promises";
+
 import Form from "../models/Form.js";
 import FormPermission from "../models/FormPermission.js";
 import Response from "../models/Response.js";
+
+import {
+  getFormAccess,
+  canEdit,
+} from "../utils/access.js";
+
+import { getTemplate } from "../utils/formTemplates.js";
 import User from "../models/User.js";
-import { getFormAccess, canEdit } from "../utils/access.js";
+
+// ==========================================
+// CREATE FORM
+// ==========================================
 
 export async function createForm(req, res) {
   try {
+    const templateName = req.body.template || "blank";
+
+    const template = getTemplate(templateName);
+
     const form = await Form.create({
-      title: req.body.title || "Untitled Form",
-      description: req.body.description || "",
+      title:
+        req.body.title?.trim() ||
+        template.title,
+
+      description:
+        req.body.description ??
+        template.description,
+
       owner: req.user._id,
-      sections: [
-        {
-          title: "Section 1",
-          description: "",
-          questions: [
-            {
-              title: "Untitled question",
-              type: "short_answer",
-              required: false
-            }
-          ]
-        }
-      ]
+
+      template: templateName,
+
+      theme: template.theme,
+
+      sections: template.sections,
     });
 
-    res.status(201).json({ form });
+    res.status(201).json({
+      form,
+    });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error(error);
+
+    res.status(500).json({
+      message: error.message,
+    });
   }
 }
 
+// ==========================================
+// MY FORMS
+// ==========================================
+
 export async function myForms(req, res) {
-  const owned = await Form.find({ owner: req.user._id }).sort({ updatedAt: -1 });
+  try {
+    const owned = await Form.find({
+      owner: req.user._id,
+    }).sort({
+      updatedAt: -1,
+    });
 
-  const permissions = await FormPermission.find({ user: req.user._id }).populate("form");
-  const shared = permissions.map((p) => ({
-    ...p.form.toObject(),
-    accessRole: p.role
-  }));
+    const permissions = await FormPermission.find({
+      user: req.user._id,
+    })
+      .populate("form")
+      .sort({
+        createdAt: -1,
+      });
 
-  res.json({ owned, shared });
+    const shared = permissions
+      .filter((p) => p.form)
+      .map((p) => ({
+        ...p.form.toObject(),
+        accessRole: p.role,
+      }));
+
+    res.json({
+      owned,
+      shared,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
 }
+
+// ==========================================
+// GET FORM
+// ==========================================
 
 export async function getForm(req, res) {
   try {
-    console.log("\n========== GET FORM DEBUG ==========");
-
-    console.log("REQ USER:", req.user?._id?.toString());
-    console.log("FORM ID:", req.params.id);
-
     const form = await Form.findById(req.params.id);
 
     if (!form) {
-      console.log("FORM NOT FOUND");
-      return res.status(404).json({ message: "Form not found" });
-    }
-
-    console.log("FORM OWNER:", form.owner?.toString());
-    console.log("PUBLISHED:", form.published);
-
-    const role = await getFormAccess(form, req.user?._id);
-
-    console.log("ROLE:", role);
-
-    if (!form.published && !role) {
-      console.log("❌ ACCESS DENIED");
-      return res.status(403).json({
-        message: "This form is not public",
-        debug: {
-          userId: req.user?._id?.toString(),
-          ownerId: form.owner?.toString(),
-          role
-        }
+      return res.status(404).json({
+        message: "Form not found",
       });
     }
 
-    console.log("✅ ACCESS GRANTED");
-    console.log("====================================\n");
+    const role = await getFormAccess(
+      form,
+      req.user?._id
+    );
+
+    if (!form.published && !role) {
+      return res.status(403).json({
+        message: "This form is not public",
+      });
+    }
 
     await form.populate("owner", "name email");
 
-    res.json({ form, role });
+    res.json({
+      form,
+      role,
+    });
   } catch (error) {
-    console.error("GET FORM ERROR:", error);
-    res.status(500).json({ message: error.message });
+    res.status(500).json({
+      message: error.message,
+    });
   }
 }
-export async function getPublicForm(req, res) {
-  const form = await Form.findOne({
-    shareId: req.params.shareId,
-    published: true
-  }).select("-owner");
 
-  if (!form) return res.status(404).json({ message: "Published form not found" });
-  res.json({ form });
+// ==========================================
+// PUBLIC FORM
+// ==========================================
+
+export async function getPublicForm(req, res) {
+  try {
+    const form = await Form.findOne({
+      shareId: req.params.shareId,
+      published: true,
+    }).select("-owner");
+
+    if (!form) {
+      return res.status(404).json({
+        message: "Published form not found",
+      });
+    }
+
+    res.json({
+      form,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
 }
+
+// ==========================================
+// UPDATE FORM
+// ==========================================
 
 export async function updateForm(req, res) {
-  const form = await Form.findById(req.params.id);
-  if (!form) return res.status(404).json({ message: "Form not found" });
+  try {
+    const form = await Form.findById(req.params.id);
 
-  const role = await getFormAccess(form, req.user._id);
-  if (!canEdit(role))
-    return res.status(403).json({ message: "You do not have edit permission" });
+    if (!form) {
+      return res.status(404).json({
+        message: "Form not found",
+      });
+    }
 
-  const { title, description, sections } = req.body;
-  form.title = title ?? form.title;
-  form.description = description ?? form.description;
-  form.sections = sections ?? form.sections;
-  await form.save();
+    const role = await getFormAccess(
+      form,
+      req.user._id
+    );
 
-  res.json({ form });
+    if (!canEdit(role)) {
+      return res.status(403).json({
+        message: "You do not have edit permission",
+      });
+    }
+
+    const {
+      title,
+      description,
+      sections,
+      theme,
+      template,
+    } = req.body;
+
+    if (title !== undefined) {
+      form.title = title;
+    }
+
+    if (description !== undefined) {
+      form.description = description;
+    }
+
+    if (sections !== undefined) {
+      form.sections = sections;
+    }
+
+    if (theme !== undefined) {
+      form.theme = {
+        ...form.theme?.toObject?.(),
+        ...theme,
+      };
+    }
+
+    if (template !== undefined) {
+      form.template = template;
+    }
+
+    await form.save();
+
+    res.json({
+      form,
+    });
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      message: error.message,
+    });
+  }
 }
+
+// ==========================================
+// PUBLISH
+// ==========================================
 
 export async function publishForm(req, res) {
-  const form = await Form.findById(req.params.id);
-  if (!form) return res.status(404).json({ message: "Form not found" });
+  try {
+    const form = await Form.findById(req.params.id);
 
-  if (form.owner.toString() !== req.user._id.toString())
-    return res.status(403).json({ message: "Only the owner can publish" });
+    if (!form) {
+      return res.status(404).json({
+        message: "Form not found",
+      });
+    }
 
-  if (!form.shareId) form.shareId = crypto.randomBytes(8).toString("hex");
-  form.published = true;
-  await form.save();
+    if (
+      form.owner.toString() !==
+      req.user._id.toString()
+    ) {
+      return res.status(403).json({
+        message: "Only the owner can publish",
+      });
+    }
 
-  res.json({
-    message: "Form published",
-    shareId: form.shareId,
-    form
-  });
+    if (!form.shareId) {
+      form.shareId =
+        crypto.randomBytes(8).toString("hex");
+    }
+
+    form.published = true;
+
+    await form.save();
+
+    res.json({
+      message: "Form published",
+      shareId: form.shareId,
+      form,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
 }
+
+// ==========================================
+// UNPUBLISH
+// ==========================================
 
 export async function unpublishForm(req, res) {
-  const form = await Form.findById(req.params.id);
-  if (!form) return res.status(404).json({ message: "Form not found" });
+  try {
+    const form = await Form.findById(req.params.id);
 
-  if (form.owner.toString() !== req.user._id.toString())
-    return res.status(403).json({ message: "Only the owner can unpublish" });
+    if (!form) {
+      return res.status(404).json({
+        message: "Form not found",
+      });
+    }
 
-  form.published = false;
-  await form.save();
-  res.json({ message: "Form unpublished", form });
+    if (
+      form.owner.toString() !==
+      req.user._id.toString()
+    ) {
+      return res.status(403).json({
+        message: "Only the owner can unpublish",
+      });
+    }
+
+    form.published = false;
+
+    await form.save();
+
+    res.json({
+      message: "Form unpublished",
+      form,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
 }
+
+// ==========================================
+// DELETE
+// ==========================================
 
 export async function deleteForm(req, res) {
-  const form = await Form.findById(req.params.id);
-  if (!form) return res.status(404).json({ message: "Form not found" });
+  try {
+    const form = await Form.findById(req.params.id);
 
-  if (form.owner.toString() !== req.user._id.toString())
-    return res.status(403).json({ message: "Only the owner can delete" });
+    if (!form) {
+      return res.status(404).json({
+        message: "Form not found",
+      });
+    }
 
-  await Promise.all([
-    Form.deleteOne({ _id: form._id }),
-    FormPermission.deleteMany({ form: form._id }),
-    Response.deleteMany({ form: form._id })
-  ]);
+    if (
+      form.owner.toString() !==
+      req.user._id.toString()
+    ) {
+      return res.status(403).json({
+        message: "Only the owner can delete",
+      });
+    }
 
-  res.json({ message: "Form deleted" });
+    await Promise.all([
+      Form.deleteOne({
+        _id: form._id,
+      }),
+
+      FormPermission.deleteMany({
+        form: form._id,
+      }),
+
+      Response.deleteMany({
+        form: form._id,
+      }),
+    ]);
+
+    res.json({
+      message: "Form deleted",
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
 }
+
+// ==========================================
+// SHARE FORM
+// ==========================================
 
 export async function shareForm(req, res) {
-  const form = await Form.findById(req.params.id);
-  if (!form) return res.status(404).json({ message: "Form not found" });
+  try {
+    const form = await Form.findById(req.params.id);
 
-  if (form.owner.toString() !== req.user._id.toString())
-    return res.status(403).json({ message: "Only the owner can manage permissions" });
+    if (!form) {
+      return res.status(404).json({
+        message: "Form not found",
+      });
+    }
 
-  const { email, role } = req.body;
-  if (!["editor", "viewer"].includes(role))
-    return res.status(400).json({ message: "Invalid role" });
+    if (
+      form.owner.toString() !==
+      req.user._id.toString()
+    ) {
+      return res.status(403).json({
+        message:
+          "Only the owner can manage permissions",
+      });
+    }
 
-  const user = await User.findOne({ email: email?.toLowerCase() });
-  if (!user) return res.status(404).json({ message: "That user is not registered" });
-  if (user._id.toString() === req.user._id.toString())
-    return res.status(400).json({ message: "Owner already has full access" });
+    const { email, role } = req.body;
 
-  const permission = await FormPermission.findOneAndUpdate(
-    { form: form._id, user: user._id },
-    { role },
-    { upsert: true, new: true }
-  ).populate("user", "name email");
+    if (!["editor", "viewer"].includes(role)) {
+      return res.status(400).json({
+        message: "Invalid role",
+      });
+    }
 
-  res.json({ permission });
+    const user = await User.findOne({
+      email: email?.toLowerCase(),
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        message:
+          "That user is not registered",
+      });
+    }
+
+    if (
+      user._id.toString() ===
+      req.user._id.toString()
+    ) {
+      return res.status(400).json({
+        message:
+          "Owner already has full access",
+      });
+    }
+
+    const permission =
+      await FormPermission.findOneAndUpdate(
+        {
+          form: form._id,
+          user: user._id,
+        },
+        {
+          role,
+        },
+        {
+          upsert: true,
+          new: true,
+        }
+      ).populate("user", "name email");
+
+    res.json({
+      permission,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
 }
+
+// ==========================================
+// PERMISSIONS
+// ==========================================
 
 export async function permissions(req, res) {
-  const form = await Form.findById(req.params.id);
-  if (!form) return res.status(404).json({ message: "Form not found" });
+  try {
+    const form = await Form.findById(req.params.id);
 
-  if (form.owner.toString() !== req.user._id.toString())
-    return res.status(403).json({ message: "Only owner can view permissions" });
+    if (!form) {
+      return res.status(404).json({
+        message: "Form not found",
+      });
+    }
 
-  const list = await FormPermission.find({ form: form._id })
-    .populate("user", "name email")
-    .sort({ createdAt: -1 });
+    if (
+      form.owner.toString() !==
+      req.user._id.toString()
+    ) {
+      return res.status(403).json({
+        message:
+          "Only owner can view permissions",
+      });
+    }
 
-  res.json({ permissions: list });
+    const list = await FormPermission.find({
+      form: form._id,
+    })
+      .populate("user", "name email")
+      .sort({
+        createdAt: -1,
+      });
+
+    res.json({
+      permissions: list,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
 }
+
+// ==========================================
+// REMOVE PERMISSION
+// ==========================================
 
 export async function removePermission(req, res) {
-  const form = await Form.findById(req.params.id);
-  if (!form) return res.status(404).json({ message: "Form not found" });
+  try {
+    const form = await Form.findById(req.params.id);
 
-  if (form.owner.toString() !== req.user._id.toString())
-    return res.status(403).json({ message: "Only owner can remove access" });
+    if (!form) {
+      return res.status(404).json({
+        message: "Form not found",
+      });
+    }
 
-  await FormPermission.deleteOne({
-    form: form._id,
-    user: req.params.userId
-  });
+    if (
+      form.owner.toString() !==
+      req.user._id.toString()
+    ) {
+      return res.status(403).json({
+        message:
+          "Only owner can remove access",
+      });
+    }
 
-  res.json({ message: "Access removed" });
+    await FormPermission.deleteOne({
+      form: form._id,
+      user: req.params.userId,
+    });
+
+    res.json({
+      message: "Access removed",
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
 }
+
+// ==========================================
+// UPLOAD RESPONSE FILE
+// ==========================================
+
+export async function uploadResponseFile(req, res) {
+  try {
+    if (!req.file) {
+      return res.status(400).json({
+        message: "No file uploaded",
+      });
+    }
+
+    const form = await Form.findOne({
+      shareId: req.params.shareId,
+      published: true,
+    });
+
+    if (!form) {
+      await fs.unlink(req.file.path).catch(() => {});
+
+      return res.status(404).json({
+        message: "Form not found",
+      });
+    }
+
+    const questionId = String(
+      req.body.questionId || ""
+    );
+
+    const question = form.sections
+      .flatMap((section) => section.questions)
+      .find(
+        (question) =>
+          question._id.toString() === questionId
+      );
+
+    if (!question) {
+      await fs.unlink(req.file.path).catch(() => {});
+
+      return res.status(400).json({
+        message: "Invalid question",
+      });
+    }
+
+    if (question.type !== "file_upload") {
+      await fs.unlink(req.file.path).catch(() => {});
+
+      return res.status(400).json({
+        message:
+          "This question does not accept files",
+      });
+    }
+
+    const url =
+      `${req.protocol}://${req.get("host")}` +
+      `/uploads/${req.file.filename}`;
+
+    res.json({
+      file: {
+        url,
+        name: req.file.originalname,
+        size: req.file.size,
+        type: req.file.mimetype,
+      },
+    });
+  } catch (error) {
+    if (req.file?.path) {
+      await fs.unlink(req.file.path).catch(() => {});
+    }
+
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+}
+
+// ==========================================
+// UPLOAD FORM HEADER IMAGE
+// ==========================================
+
+export async function uploadThemeImage(req, res) {
+  try {
+    const form = await Form.findById(
+      req.params.id
+    );
+
+    if (!form) {
+      if (req.file?.path) {
+        await fs.unlink(req.file.path).catch(() => {});
+      }
+
+      return res.status(404).json({
+        message: "Form not found",
+      });
+    }
+
+    const role = await getFormAccess(
+      form,
+      req.user._id
+    );
+
+    if (!canEdit(role)) {
+      if (req.file?.path) {
+        await fs.unlink(req.file.path).catch(() => {});
+      }
+
+      return res.status(403).json({
+        message: "You cannot edit this form",
+      });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({
+        message: "No image uploaded",
+      });
+    }
+
+    const url =
+      `${req.protocol}://${req.get("host")}` +
+      `/uploads/${req.file.filename}`;
+
+    form.theme.headerImage = url;
+
+    await form.save();
+
+    res.json({
+      message: "Header image updated",
+      form,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
+}
+
+// ==========================================
+// SUBMIT RESPONSE
+// ==========================================
 
 export async function submitResponse(req, res) {
-  const form = await Form.findOne({
-    shareId: req.params.shareId,
-    published: true
-  });
+  try {
+    const form = await Form.findOne({
+      shareId: req.params.shareId,
+      published: true,
+    });
 
-  if (!form) return res.status(404).json({ message: "Form not found" });
+    if (!form) {
+      return res.status(404).json({
+        message: "Form not found",
+      });
+    }
 
-  const answers = Array.isArray(req.body.answers) ? req.body.answers : [];
-  const validIds = new Set(
-    form.sections.flatMap((s) => s.questions.map((q) => q._id.toString()))
-  );
+    const answers = Array.isArray(req.body.answers)
+      ? req.body.answers
+      : [];
 
-  const cleanAnswers = answers.filter(
-    (a) => a && validIds.has(String(a.questionId))
-  );
+    const validQuestions = form.sections.flatMap(
+      (section) => section.questions
+    );
 
-  const response = await Response.create({
-    form: form._id,
-    respondent: req.user?._id || null,
-    answers: cleanAnswers
-  });
+    const validIds = new Set(
+      validQuestions.map((q) =>
+        q._id.toString()
+      )
+    );
 
-  res.status(201).json({ message: "Response submitted", responseId: response._id });
+    const cleanAnswers = answers.filter(
+      (answer) =>
+        answer &&
+        validIds.has(String(answer.questionId))
+    );
+
+    // Required question validation
+    for (const question of validQuestions) {
+      if (!question.required) {
+        continue;
+      }
+
+      const answer = cleanAnswers.find(
+        (item) =>
+          String(item.questionId) ===
+          question._id.toString()
+      );
+
+      const value = answer?.value;
+
+      const empty =
+        value === undefined ||
+        value === null ||
+        value === "" ||
+        (Array.isArray(value) &&
+          value.length === 0);
+
+      if (empty) {
+        return res.status(400).json({
+          message:
+            `Please answer: ${question.title}`,
+        });
+      }
+    }
+
+    const response = await Response.create({
+      form: form._id,
+      respondent: req.user?._id || null,
+      answers: cleanAnswers,
+    });
+
+    res.status(201).json({
+      message: "Response submitted",
+      responseId: response._id,
+    });
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      message: error.message,
+    });
+  }
 }
 
+// ==========================================
+// GET RESPONSES
+// ==========================================
+
 export async function responses(req, res) {
-  const form = await Form.findById(req.params.id);
-  if (!form) return res.status(404).json({ message: "Form not found" });
+  try {
+    const form = await Form.findById(req.params.id);
 
-  const role = await getFormAccess(form, req.user._id);
-  if (role !== "owner" && role !== "editor")
-    return res.status(403).json({ message: "No permission to view responses" });
+    if (!form) {
+      return res.status(404).json({
+        message: "Form not found",
+      });
+    }
 
-  const data = await Response.find({ form: form._id })
-    .populate("respondent", "name email")
-    .sort({ createdAt: -1 });
+    const role = await getFormAccess(
+      form,
+      req.user._id
+    );
 
-  res.json({ responses: data });
+    if (
+      role !== "owner" &&
+      role !== "editor"
+    ) {
+      return res.status(403).json({
+        message:
+          "No permission to view responses",
+      });
+    }
+
+    const data = await Response.find({
+      form: form._id,
+    })
+      .populate(
+        "respondent",
+        "name email"
+      )
+      .sort({
+        createdAt: -1,
+      });
+
+    res.json({
+      responses: data,
+    });
+  } catch (error) {
+    res.status(500).json({
+      message: error.message,
+    });
+  }
 }
